@@ -34,10 +34,10 @@ import (
 )
 
 const (
-	reasonPVCClinupSuccess = "SucessfulPVCClinup"
-	reasonPVCClinupFail    = "FailedPVCClinup"
-	messagePVCDeleted      = "delete Claim %s in StatefulSet %s successful"
-	messagePVCNotDeleted   = "delete Claim %s in StatefulSet %s failed"
+	reasonPVCCleanupSuccessfull = "SucessfulPVCCleanup"
+	reasonPVCCleanupFailed      = "FailedPVCCleanup"
+	messageCleanupSuccessfull   = "delete Claim %s in StatefulSet %s successful"
+	messageCleanupFailed        = "delete Claim %s in StatefulSet %s failed"
 )
 
 var log = logf.Log.WithName("mysqlcluster.pvccleaner")
@@ -71,16 +71,16 @@ func (p *PVCCleaner) Run(ctx context.Context) error {
 	}
 
 	// Find any pvcs with higher ordinal than replicas and delete them
-	claims, err := p.getClaims(ctx)
+	pvcs, err := p.getPVCs(ctx)
 	if err != nil {
 		return err
 	}
 
-	for _, claim := range claims {
-		ord := getOrdinal(claim.Name)
+	for _, pvc := range pvcs {
+		ord := getOrdinal(pvc.Name)
 		if ord >= *cluster.Spec.Replicas && ord != 0 {
-			log.Info("cleanning up PVC", "pvc", claim)
-			if err := p.deleteClaim(ctx, &claim); err != nil {
+			log.Info("cleanning up PVC", "pvc", pvc)
+			if err := p.deletePVC(ctx, &pvc); err != nil {
 				return err
 			}
 		}
@@ -89,20 +89,20 @@ func (p *PVCCleaner) Run(ctx context.Context) error {
 	return nil
 }
 
-func (p *PVCCleaner) deleteClaim(ctx context.Context, pvc *core.PersistentVolumeClaim) error {
+func (p *PVCCleaner) deletePVC(ctx context.Context, pvc *core.PersistentVolumeClaim) error {
 	err := p.client.Delete(ctx, pvc)
 	if err != nil {
-		p.recorder.Event(p.cluster, core.EventTypeWarning, reasonPVCClinupFail,
-			fmt.Sprintf(messagePVCNotDeleted, pvc.Name, p.cluster.Name))
+		p.recorder.Event(p.cluster, core.EventTypeWarning, reasonPVCCleanupFailed,
+			fmt.Sprintf(messageCleanupFailed, pvc.Name, p.cluster.Name))
 		return err
 	}
 
-	p.recorder.Event(p.cluster, core.EventTypeNormal, reasonPVCClinupSuccess,
-		fmt.Sprintf(messagePVCDeleted, pvc.Name, p.cluster.Name))
+	p.recorder.Event(p.cluster, core.EventTypeNormal, reasonPVCCleanupSuccessfull,
+		fmt.Sprintf(messageCleanupSuccessfull, pvc.Name, p.cluster.Name))
 	return nil
 }
 
-func (p *PVCCleaner) getClaims(ctx context.Context) ([]core.PersistentVolumeClaim, error) {
+func (p *PVCCleaner) getPVCs(ctx context.Context) ([]core.PersistentVolumeClaim, error) {
 	pvcs := &core.PersistentVolumeClaimList{}
 	lo := &client.ListOptions{
 		Namespace:     p.cluster.Namespace,
@@ -131,6 +131,11 @@ func (p *PVCCleaner) getClaims(ctx context.Context) ([]core.PersistentVolumeClai
 }
 
 func isOwnedBy(pvc core.PersistentVolumeClaim, cluster *api.MysqlCluster) bool {
+	if pvc.Namespace != cluster.Namespace {
+		// check is that cluster is in the same namespace
+		return false
+	}
+
 	for _, ref := range pvc.ObjectMeta.GetOwnerReferences() {
 		if ref.Kind == "MysqlCluster" && ref.Name == cluster.Name {
 			return true
